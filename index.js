@@ -22,6 +22,14 @@ var u         = require('./lib/util')
 var clone     = u.clone
 var toAddress = u.toAddress
 
+var createFeed = require('ssb-feed')
+var ssbKeys    = require('ssb-keys')
+
+var core = require('./core')
+
+var Layered    = require('layered')
+var AllowDeny  = require('layered/permissions/allow-deny')
+
 //I made this global so that when you run tests with multiple
 //servers each connection gets it's own id..
 var sessCounter = 0
@@ -62,9 +70,16 @@ exports = module.exports = function (config, ssb, feed) {
   if((!ssb || !feed) && !config.path)
     throw new Error('if ssb and feed are not provided, config must have path')
 
+  var layered = Layered(config)
+
   if(config.path) mkdirp.sync(config.path)
+
   ssb = ssb || loadSSB(config)
-  feed = feed || ssb.createFeed(loadKeys(config))
+
+  layered.use(core(ssb))
+
+  feed = feed || createFeed(ssb, loadKeys(config), ssbKeys)
+  config.id = config.id || feed.id
   var keys = feed.keys
 
   // server
@@ -76,14 +91,20 @@ exports = module.exports = function (config, ssb, feed) {
     server.emit('log:info', ['sbot',  rpc._sessid, 'incoming-connection', stream.remoteAddress])
   })
 
+  server.api = layered.api
+  server.use = layered.use
+
   // peer connection
   // ===============
 
   // sets up RPC session on a stream (used by {in,out}going streams)
 
   function attachSession (stream, incoming, cb) {
-    var rpc = peerApi(server.manifest, api)
-                .permissions({allow: ['auth']})
+    var perms = AllowDeny()
+    var rpc = peerApi(layered.manifest(), layered.api(perms))
+
+    perms({allow: ['auth']})
+
     var rpcStream = rpc.createStream()
     rpcStream = inactive(rpcStream, server.config.timeout)
     pull(stream, rpcStream, stream)
@@ -240,26 +261,28 @@ exports = module.exports = function (config, ssb, feed) {
   // plugin management
   // =================
 
-  server.use = function (plugin) {
-    server.emit('log:info', [
-      'sbot', null, 'use-plugin',
-      plugin.name + (plugin.version ? '@'+plugin.version : '')
-    ])
-    if(isFunction(plugin)) plugin(server)
-    else if(isString(plugin.name)) {
-      server.manifest[plugin.name] = plugin.manifest
-      if(plugin.permissions) {
-        server.permissions = merge(
-          server.permissions,
-          clone(plugin.permissions, function (v) {
-            return plugin.name + '.' + v
-          }))
-      }
+//  server.use = function (plugin) {
+//    server.emit('log:info', [
+//      'sbot', null, 'use-plugin',
+//      plugin.name + (plugin.version ? '@'+plugin.version : '')
+//    ])
+//    if(isFunction(plugin)) plugin(server)
+//    else if(isString(plugin.name)) {
+//      server.manifest[plugin.name] = plugin.manifest
+//      if(plugin.permissions) {
+//        server.permissions = merge(
+//          server.permissions,
+//          clone(plugin.permissions, function (v) {
+//            return plugin.name + '.' + v
+//          }))
+//      }
+//
+//      server[plugin.name] = api[plugin.name] = plugin.init(server)
+//    }
+//    return this
+//  }
 
-      server[plugin.name] = api[plugin.name] = plugin.init(server)
-    }
-    return this
-  }
+//  server.use = layered.use
 
   // auth management
   // ===============
@@ -286,10 +309,12 @@ exports = module.exports = function (config, ssb, feed) {
     })
   }
 
-  server.getManifest = function () {
-    return server.manifest
-  }
+  server.manifest = server.getManifest = layered.manifest
 
+//  server.getManifest = function () {
+//    return server.manifest
+//  }
+//
   server.authorize = function (msg) {
     var secret = this.getAccessKey(msg.keyId)
     if(!secret) return
