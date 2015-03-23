@@ -45,15 +45,16 @@ module.exports = {
     peers: 'sync',
     connect: 'async'
   },
-  init: function (server) {
+  init: function (server, config) {
+    console.log(server)
+
     var sched
     server.on('close', function () {
       server.closed = true
       clearTimeout(sched)
     })
 
-    var config = server.config
-    var conf = server.config.gossip || {}
+    var conf = config.gossip || {} //LAYERED NEEDS CONFIG
 
     //current list of known peers.
     var peers = []
@@ -113,7 +114,7 @@ module.exports = {
     var port = config.port
 
     pull(
-      server.ssb.messagesByType({type: 'pub', live: true, keys: false}),
+      server.messagesByType({type: 'pub', live: true, keys: false}),
       pull.map(function (e) {
         var o = toAddress(e.content.address)
         return o

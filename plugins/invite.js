@@ -25,6 +25,10 @@ module.exports = {
     use: 'async',
     addMe: 'async'
   },
+  dependencies: {
+    friends: '1',
+    core: '1'
+  },
   permissions: {
     anonymous: {allow: ['use']}
   },
